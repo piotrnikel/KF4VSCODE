@@ -7,13 +7,15 @@
   "engines": {
     "vscode": ">=1.90.0"
   },
-  "categories": ["Other"],
+  "categories": [
+    "Other"
+  ],
   "activationEvents": [
     "onCommand:kubeflow.login",
     "onCommand:kubeflow.runTrainingJob",
     "onView:kubeflowPanel"
   ],
-  "main": "./out/extension.js",
+  "main": "./extension.js",
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -33,28 +35,83 @@
       ]
     },
     "commands": [
-      { "command": "kubeflow.login", "title": "Kubeflow: Login" },
-      { "command": "kubeflow.signOut", "title": "Kubeflow: Sign out" },
-      { "command": "kubeflow.runTrainingJob", "title": "Kubeflow: Run Training Job" },
-      { "command": "kubeflow.openDashboard", "title": "Kubeflow: Open Dashboard" },
-      { "command": "kubeflow.createNotebook", "title": "Kubeflow: Create Notebook" },
-      { "command": "kubeflow.deleteTrainingJob", "title": "Kubeflow: Delete Training Job" },
-      { "command": "kubeflow.describeJob", "title": "Kubeflow: Describe Job" },
-      { "command": "kubeflow.createPVC", "title": "Kubeflow: Create PVC" },
-      { "command": "kubeflow.restartJob", "title": "Kubeflow: Restart Job" },
-      { "command": "kubeflow.viewGeneratedYaml", "title": "Kubeflow: View Generated YAML" },
-      { "command": "kubeflow.refreshPanel", "title": "Kubeflow: Refresh Panel" }
+      {
+        "command": "kubeflow.login",
+        "title": "Kubeflow: Login"
+      },
+      {
+        "command": "kubeflow.signOut",
+        "title": "Kubeflow: Sign out"
+      },
+      {
+        "command": "kubeflow.runTrainingJob",
+        "title": "Kubeflow: Run Training Job"
+      },
+      {
+        "command": "kubeflow.openDashboard",
+        "title": "Kubeflow: Open Dashboard"
+      },
+      {
+        "command": "kubeflow.createNotebook",
+        "title": "Kubeflow: Create Notebook"
+      },
+      {
+        "command": "kubeflow.deleteTrainingJob",
+        "title": "Kubeflow: Delete Training Job"
+      },
+      {
+        "command": "kubeflow.describeJob",
+        "title": "Kubeflow: Describe Job"
+      },
+      {
+        "command": "kubeflow.createPVC",
+        "title": "Kubeflow: Create PVC"
+      },
+      {
+        "command": "kubeflow.restartJob",
+        "title": "Kubeflow: Restart Job"
+      },
+      {
+        "command": "kubeflow.viewGeneratedYaml",
+        "title": "Kubeflow: View Generated YAML"
+      },
+      {
+        "command": "kubeflow.refreshPanel",
+        "title": "Kubeflow: Refresh Panel"
+      }
     ],
     "configuration": {
       "title": "Kubeflow",
       "properties": {
-        "kflow.url": { "type": "string", "default": "", "description": "Kubeflow base URL" },
-        "kflow.verifySSL": { "type": "boolean", "default": true },
-        "kflow.keycloak.realm": { "type": "string", "default": "" },
-        "kflow.defaultNamespace": { "type": "string", "default": "kubeflow-user" },
-        "kflow.defaultImage": { "type": "string", "default": "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime" },
-        "kflow.defaultPVCsize": { "type": "string", "default": "10Gi" },
-        "kflow.autoPVCforPip": { "type": "boolean", "default": true }
+        "kflow.url": {
+          "type": "string",
+          "default": "",
+          "description": "Kubeflow base URL"
+        },
+        "kflow.verifySSL": {
+          "type": "boolean",
+          "default": true
+        },
+        "kflow.keycloak.realm": {
+          "type": "string",
+          "default": ""
+        },
+        "kflow.defaultNamespace": {
+          "type": "string",
+          "default": "kubeflow-user"
+        },
+        "kflow.defaultImage": {
+          "type": "string",
+          "default": "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime"
+        },
+        "kflow.defaultPVCsize": {
+          "type": "string",
+          "default": "10Gi"
+        },
+        "kflow.autoPVCforPip": {
+          "type": "boolean",
+          "default": true
+        }
       }
     },
     "menus": {
@@ -66,15 +123,5 @@
         }
       ]
     }
-  },
-  "scripts": {
-    "compile": "tsc -p ./",
-    "lint": "echo 'no lint configured'",
-    "vscode:prepublish": "npm run compile"
-  },
-  "devDependencies": {
-    "@types/node": "^20.14.10",
-    "@types/vscode": "^1.90.0",
-    "typescript": "^5.5.4"
   }
 }
