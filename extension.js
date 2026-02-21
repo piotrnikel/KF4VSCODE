@@ -16,6 +16,7 @@ function getSettings() {
     url: cfg.get('kflow.url', ''),
     verifySSL: cfg.get('kflow.verifySSL', true),
     realm: cfg.get('kflow.keycloak.realm', ''),
+    tokenUrl: cfg.get('kflow.keycloak.tokenUrl', ''),
     defaultNamespace: cfg.get('kflow.defaultNamespace', 'kubeflow-user'),
     defaultImage: cfg.get('kflow.defaultImage', 'pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime'),
     defaultPVCsize: cfg.get('kflow.defaultPVCsize', '10Gi'),
@@ -138,8 +139,21 @@ class AuthService {
   }
 
   resolveTokenEndpoint(url, realm) {
+    const explicitTokenUrl = getSettings().tokenUrl;
+    if (explicitTokenUrl) {
+      return String(explicitTokenUrl).replace(/\/$/, '');
+    }
+
+    const realmValue = String(realm || '').trim();
+
+    if (/^https?:\/\//i.test(realmValue)) {
+      // Accept full realm URL, e.g. https://kc.example.com/realms/kubeflow
+      // and convert it to token endpoint.
+      return `${realmValue.replace(/\/$/, '')}/protocol/openid-connect/token`;
+    }
+
     const base = String(url).replace(/\/$/, '');
-    const r = realm || 'kubeflow';
+    const r = realmValue || 'kubeflow';
     return `${base}/realms/${r}/protocol/openid-connect/token`;
   }
 
@@ -417,7 +431,14 @@ function registerCommands(context, authService, jobRunService, treeProvider) {
         vscode.window.showInformationMessage('Kubeflow login successful.');
         treeProvider.refresh();
       } catch (e) {
-        vscode.window.showErrorMessage(`Kubeflow login failed: ${String(e)}`);
+        const errorMsg = String(e);
+        if (errorMsg.includes('Authentication failed (403)')) {
+          vscode.window.showErrorMessage(
+            'Kubeflow login failed (403). Check kflow.keycloak.realm (realm name, not UI URL) or set kflow.keycloak.tokenUrl directly.'
+          );
+        } else {
+          vscode.window.showErrorMessage(`Kubeflow login failed: ${errorMsg}`);
+        }
       }
     }),
     vscode.commands.registerCommand('kubeflow.signOut', async () => {

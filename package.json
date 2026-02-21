@@ -96,6 +96,11 @@
           "type": "string",
           "default": ""
         },
+        "kflow.keycloak.tokenUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Optional explicit Keycloak token endpoint (recommended when Keycloak is on a separate host)."
+        },
         "kflow.defaultNamespace": {
           "type": "string",
           "default": "kubeflow-user"
