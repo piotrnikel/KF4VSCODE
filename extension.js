@@ -17,6 +17,7 @@ function getSettings() {
     verifySSL: cfg.get('kflow.verifySSL', true),
     realm: cfg.get('kflow.keycloak.realm', ''),
     tokenUrl: cfg.get('kflow.keycloak.tokenUrl', ''),
+    templatesFile: cfg.get('kflow.templatesFile', '.kubeflow/templates.json'),
     defaultNamespace: cfg.get('kflow.defaultNamespace', 'kubeflow-user'),
     defaultImage: cfg.get('kflow.defaultImage', 'pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime'),
     defaultPVCsize: cfg.get('kflow.defaultPVCsize', '10Gi'),
@@ -183,6 +184,46 @@ class K8sApiClient {
 
   async list(namespace, pathTemplate) {
     return this.request(pathTemplate.replace('{namespace}', namespace));
+  }
+
+  async getCustomObject(group, version, namespace, plural, name) {
+    return this.request(`/apis/${group}/${version}/namespaces/${namespace}/${plural}/${name}`);
+  }
+
+  async deleteCustomObject(group, version, namespace, plural, name) {
+    return this.request(`/apis/${group}/${version}/namespaces/${namespace}/${plural}/${name}`, {
+      method: 'DELETE'
+    });
+  }
+
+  async getPodLogs(namespace, podName, containerName) {
+    const qs = new URLSearchParams({ follow: 'false', tailLines: '200' });
+    if (containerName) qs.set('container', containerName);
+    return this.requestRaw(`/api/v1/namespaces/${namespace}/pods/${podName}/log?${qs.toString()}`);
+  }
+
+  async listPodsByJob(namespace, jobName) {
+    const qs = new URLSearchParams({ labelSelector: `training.kubeflow.org/job-name=${jobName}` });
+    return this.request(`/api/v1/namespaces/${namespace}/pods?${qs.toString()}`);
+  }
+
+  async requestRaw(pathSuffix, init = {}) {
+    await this.authService.ensureValidSession();
+    const settings = getSettings();
+    const token = this.authService.getAccessToken();
+    if (!settings.url) throw new Error('kflow.url is empty. Set it in settings.');
+
+    const url = `${settings.url.replace(/\/$/, '')}${pathSuffix}`;
+    const res = await fetch(url, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(init.headers || {})
+      }
+    });
+
+    if (!res.ok) throw new Error(`Kubernetes API error ${res.status}: ${await res.text()}`);
+    return res.text();
   }
 
   async request(pathSuffix, init = {}) {
@@ -357,6 +398,96 @@ class JobRunService {
     return this.lastManifest;
   }
 
+  async listJobs(namespace) {
+    const payload = await this.k8sClient.list(namespace, '/apis/kubeflow.org/v1/namespaces/{namespace}/pytorchjobs');
+    return payload.items || [];
+  }
+
+  async describeJob(namespace, name) {
+    return this.k8sClient.getCustomObject('kubeflow.org', 'v1', namespace, 'pytorchjobs', name);
+  }
+
+  async deleteJob(namespace, name) {
+    await this.k8sClient.deleteCustomObject('kubeflow.org', 'v1', namespace, 'pytorchjobs', name);
+  }
+
+  async restartLastRun() {
+    if (!this.lastManifest) {
+      throw new Error('No previous manifest available. Run a job first.');
+    }
+    const manifest = JSON.parse(JSON.stringify(this.lastManifest));
+    const namespace = manifest?.metadata?.namespace || getSettings().defaultNamespace;
+    const oldName = manifest?.metadata?.name || 'ptjob';
+    const newName = `${oldName}-restart-${Date.now().toString().slice(-4)}`;
+    manifest.metadata.name = newName;
+    delete manifest.metadata.resourceVersion;
+    delete manifest.metadata.uid;
+    delete manifest.metadata.creationTimestamp;
+
+    await this.k8sClient.createCustomObject('kubeflow.org', 'v1', namespace, 'pytorchjobs', manifest);
+    this.lastManifest = manifest;
+    return newName;
+  }
+
+  async streamJobLogs(namespace, jobName, outputChannel) {
+    const pods = await this.k8sClient.listPodsByJob(namespace, jobName);
+    const items = pods.items || [];
+    if (items.length === 0) {
+      throw new Error(`No pods found for job ${jobName}.`);
+    }
+
+    const pickedPod =
+      (await vscode.window.showQuickPick(
+        items.map((p) => ({
+          label: p.metadata?.name || 'unnamed-pod',
+          description: p.status?.phase || ''
+        })),
+        { placeHolder: 'Select pod for log streaming' }
+      )) || items[0];
+
+    const podName = pickedPod.label ? pickedPod.label : pickedPod.metadata?.name;
+    const containerName = items.find((p) => p.metadata?.name === podName)?.spec?.containers?.[0]?.name;
+    const logs = await this.k8sClient.getPodLogs(namespace, podName, containerName);
+
+    outputChannel.clear();
+    outputChannel.show(true);
+    outputChannel.appendLine(`[Kubeflow] Logs for job=${jobName}, pod=${podName}`);
+
+    for (const line of logs.split('\n')) {
+      outputChannel.appendLine(colorizeLogLine(line));
+    }
+  }
+
+  async runFromTemplate() {
+    const template = await pickTemplateFromWorkspace();
+    if (!template) return;
+
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document.languageId !== 'python') {
+      throw new Error('Open a Python file first to run template-based job.');
+    }
+
+    const settings = getSettings();
+    const scriptPath = editor.document.uri.fsPath;
+    const name = `ptjob-${Date.now().toString().slice(-6)}`;
+
+    const options = {
+      name,
+      namespace: template.namespace || settings.defaultNamespace,
+      image: template.image || settings.defaultImage,
+      gpu: Number.isFinite(Number(template.gpu)) ? Number(template.gpu) : 1,
+      cpu: String(template.cpu || '2'),
+      memory: String(template.mem || template.memory || '16Gi'),
+      scriptPath,
+      pip: Array.isArray(template.pip) ? template.pip : [],
+      apt: Array.isArray(template.apt) ? template.apt : [],
+      autoPVCforPip: template.autoPVCforPip !== undefined ? Boolean(template.autoPVCforPip) : settings.autoPVCforPip
+    };
+
+    await this.submitRun(options, settings);
+    return options.name;
+  }
+
   async runFromActivePythonFile() {
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document.languageId !== 'python') {
@@ -391,28 +522,36 @@ class JobRunService {
       autoPVCforPip: settings.autoPVCforPip
     };
 
-    const archive = await this.packager.packageToTarGz(scriptPath);
+    await this.submitRun(options, settings);
+    vscode.window.showInformationMessage(`Kubeflow job ${name} submitted.`);
+  }
+
+  async submitRun(options, settings) {
+    const archive = await this.packager.packageToTarGz(options.scriptPath);
     const encoded = await this.packager.readBase64(archive);
 
-    const cmName = `${name}-artifact`;
-    await this.k8sClient.createCoreObject(namespace, 'configmaps', this.manifestBuilder.buildArtifactConfigMap(namespace, cmName, encoded));
+    const cmName = `${options.name}-artifact`;
+    await this.k8sClient.createCoreObject(
+      options.namespace,
+      'configmaps',
+      this.manifestBuilder.buildArtifactConfigMap(options.namespace, cmName, encoded)
+    );
 
     if (options.autoPVCforPip) {
       try {
         await this.k8sClient.createCoreObject(
-          namespace,
+          options.namespace,
           'persistentvolumeclaims',
-          this.manifestBuilder.buildPVC('pip-cache-pvc', namespace, settings.defaultPVCsize)
+          this.manifestBuilder.buildPVC('pip-cache-pvc', options.namespace, settings.defaultPVCsize)
         );
       } catch {
-        // no-op (already exists)
+        // likely exists already
       }
     }
 
     const manifest = this.manifestBuilder.buildPyTorchJob(options, cmName);
     this.lastManifest = manifest;
-    await this.k8sClient.createCustomObject('kubeflow.org', 'v1', namespace, 'pytorchjobs', manifest);
-    vscode.window.showInformationMessage(`Kubeflow job ${name} submitted.`);
+    await this.k8sClient.createCustomObject('kubeflow.org', 'v1', options.namespace, 'pytorchjobs', manifest);
   }
 }
 
@@ -423,7 +562,40 @@ function splitCsv(value) {
     .filter(Boolean);
 }
 
+function colorizeLogLine(line) {
+  if (line.includes('ERROR') || line.includes('Traceback')) return `[ERROR] ${line}`;
+  if (line.includes('WARN')) return `[WARN] ${line}`;
+  return line;
+}
+
+async function pickTemplateFromWorkspace() {
+  const settings = getSettings();
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) throw new Error('Open a workspace folder to use templates.');
+
+  const templatesPath = path.join(workspaceFolder.uri.fsPath, settings.templatesFile);
+  let payload;
+  try {
+    payload = JSON.parse(await fs.readFile(templatesPath, 'utf-8'));
+  } catch {
+    throw new Error(`Cannot read templates file: ${templatesPath}`);
+  }
+
+  const templates = Array.isArray(payload?.templates) ? payload.templates : Array.isArray(payload) ? payload : [];
+  if (templates.length === 0) {
+    throw new Error(`No templates found in ${templatesPath}.`);
+  }
+
+  const picked = await vscode.window.showQuickPick(
+    templates.map((t) => ({ label: t.name || t.image || 'template', description: t.namespace || '', template: t })),
+    { placeHolder: 'Select Kubeflow template' }
+  );
+
+  return picked?.template;
+}
+
 function registerCommands(context, authService, jobRunService, treeProvider) {
+  const logsChannel = vscode.window.createOutputChannel('Kubeflow Logs');
   context.subscriptions.push(
     vscode.commands.registerCommand('kubeflow.login', async () => {
       try {
@@ -454,6 +626,15 @@ function registerCommands(context, authService, jobRunService, treeProvider) {
         vscode.window.showErrorMessage(`Run failed: ${String(e)}`);
       }
     }),
+    vscode.commands.registerCommand('kubeflow.runTrainingJobFromTemplate', async () => {
+      try {
+        const name = await jobRunService.runFromTemplate();
+        if (name) vscode.window.showInformationMessage(`Kubeflow template job ${name} submitted.`);
+        treeProvider.refresh();
+      } catch (e) {
+        vscode.window.showErrorMessage(`Template run failed: ${String(e)}`);
+      }
+    }),
     vscode.commands.registerCommand('kubeflow.viewGeneratedYaml', async () => {
       const manifest = jobRunService.getLastManifest();
       if (!manifest) return vscode.window.showInformationMessage('No generated manifest yet.');
@@ -467,10 +648,63 @@ function registerCommands(context, authService, jobRunService, treeProvider) {
     }),
     vscode.commands.registerCommand('kubeflow.refreshPanel', () => treeProvider.refresh()),
     vscode.commands.registerCommand('kubeflow.createNotebook', () => vscode.window.showInformationMessage('Create Notebook is planned for next iteration.')),
-    vscode.commands.registerCommand('kubeflow.deleteTrainingJob', () => vscode.window.showInformationMessage('Delete Training Job is scaffolded.')),
-    vscode.commands.registerCommand('kubeflow.describeJob', () => vscode.window.showInformationMessage('Describe Job is scaffolded.')),
+    vscode.commands.registerCommand('kubeflow.deleteTrainingJob', async () => {
+      try {
+        const namespace = getSettings().defaultNamespace;
+        const jobs = await jobRunService.listJobs(namespace);
+        const picked = await vscode.window.showQuickPick(
+          jobs.map((j) => ({ label: j.metadata?.name || 'unnamed' })),
+          { placeHolder: 'Select job to delete' }
+        );
+        if (!picked) return;
+        await jobRunService.deleteJob(namespace, picked.label);
+        vscode.window.showInformationMessage(`Deleted job ${picked.label}.`);
+        treeProvider.refresh();
+      } catch (e) {
+        vscode.window.showErrorMessage(`Delete job failed: ${String(e)}`);
+      }
+    }),
+    vscode.commands.registerCommand('kubeflow.describeJob', async () => {
+      try {
+        const namespace = getSettings().defaultNamespace;
+        const jobs = await jobRunService.listJobs(namespace);
+        const picked = await vscode.window.showQuickPick(
+          jobs.map((j) => ({ label: j.metadata?.name || 'unnamed' })),
+          { placeHolder: 'Select job to describe' }
+        );
+        if (!picked) return;
+        const details = await jobRunService.describeJob(namespace, picked.label);
+        const doc = await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify(details, null, 2) });
+        await vscode.window.showTextDocument(doc, { preview: false });
+      } catch (e) {
+        vscode.window.showErrorMessage(`Describe job failed: ${String(e)}`);
+      }
+    }),
     vscode.commands.registerCommand('kubeflow.createPVC', () => vscode.window.showInformationMessage('Create PVC is scaffolded.')),
-    vscode.commands.registerCommand('kubeflow.restartJob', () => vscode.window.showInformationMessage('Restart Job is scaffolded.'))
+    vscode.commands.registerCommand('kubeflow.restartJob', async () => {
+      try {
+        const name = await jobRunService.restartLastRun();
+        vscode.window.showInformationMessage(`Restarted job as ${name}.`);
+        treeProvider.refresh();
+      } catch (e) {
+        vscode.window.showErrorMessage(`Restart failed: ${String(e)}`);
+      }
+    }),
+    vscode.commands.registerCommand('kubeflow.streamJobLogs', async () => {
+      try {
+        const namespace = getSettings().defaultNamespace;
+        const jobs = await jobRunService.listJobs(namespace);
+        const picked = await vscode.window.showQuickPick(
+          jobs.map((j) => ({ label: j.metadata?.name || 'unnamed' })),
+          { placeHolder: 'Select job to stream logs' }
+        );
+        if (!picked) return;
+        await jobRunService.streamJobLogs(namespace, picked.label, logsChannel);
+      } catch (e) {
+        vscode.window.showErrorMessage(`Stream logs failed: ${String(e)}`);
+      }
+    }),
+    logsChannel
   );
 }
 

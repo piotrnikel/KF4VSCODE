@@ -48,6 +48,10 @@
         "title": "Kubeflow: Run Training Job"
       },
       {
+        "command": "kubeflow.runTrainingJobFromTemplate",
+        "title": "Kubeflow: Run Training Job (Template)"
+      },
+      {
         "command": "kubeflow.openDashboard",
         "title": "Kubeflow: Open Dashboard"
       },
@@ -78,6 +82,10 @@
       {
         "command": "kubeflow.refreshPanel",
         "title": "Kubeflow: Refresh Panel"
+      },
+      {
+        "command": "kubeflow.streamJobLogs",
+        "title": "Kubeflow: Stream Job Logs"
       }
     ],
     "configuration": {
@@ -100,6 +108,11 @@
           "type": "string",
           "default": "",
           "description": "Optional explicit Keycloak token endpoint (recommended when Keycloak is on a separate host)."
+        },
+        "kflow.templatesFile": {
+          "type": "string",
+          "default": ".kubeflow/templates.json",
+          "description": "Workspace-relative path to Kubeflow JSON templates file."
         },
         "kflow.defaultNamespace": {
           "type": "string",
