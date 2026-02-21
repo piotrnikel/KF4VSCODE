@@ -1,0 +1,132 @@
+{
+  "name": "kubeflow-vscode-plugin",
+  "displayName": "Kubeflow Training",
+  "description": "Run and monitor Kubeflow training jobs from VS Code without YAML.",
+  "version": "0.0.1",
+  "publisher": "local",
+  "engines": {
+    "vscode": ">=1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:kubeflow.login",
+    "onCommand:kubeflow.runTrainingJob",
+    "onView:kubeflowPanel"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "kubeflow",
+          "title": "Kubeflow",
+          "icon": "media/kubeflow.svg"
+        }
+      ]
+    },
+    "views": {
+      "kubeflow": [
+        {
+          "id": "kubeflowPanel",
+          "name": "KUBEFLOW PANEL"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "kubeflow.login",
+        "title": "Kubeflow: Login"
+      },
+      {
+        "command": "kubeflow.signOut",
+        "title": "Kubeflow: Sign out"
+      },
+      {
+        "command": "kubeflow.runTrainingJob",
+        "title": "Kubeflow: Run Training Job"
+      },
+      {
+        "command": "kubeflow.openDashboard",
+        "title": "Kubeflow: Open Dashboard"
+      },
+      {
+        "command": "kubeflow.createNotebook",
+        "title": "Kubeflow: Create Notebook"
+      },
+      {
+        "command": "kubeflow.deleteTrainingJob",
+        "title": "Kubeflow: Delete Training Job"
+      },
+      {
+        "command": "kubeflow.describeJob",
+        "title": "Kubeflow: Describe Job"
+      },
+      {
+        "command": "kubeflow.createPVC",
+        "title": "Kubeflow: Create PVC"
+      },
+      {
+        "command": "kubeflow.restartJob",
+        "title": "Kubeflow: Restart Job"
+      },
+      {
+        "command": "kubeflow.viewGeneratedYaml",
+        "title": "Kubeflow: View Generated YAML"
+      },
+      {
+        "command": "kubeflow.refreshPanel",
+        "title": "Kubeflow: Refresh Panel"
+      }
+    ],
+    "configuration": {
+      "title": "Kubeflow",
+      "properties": {
+        "kflow.url": {
+          "type": "string",
+          "default": "",
+          "description": "Kubeflow base URL"
+        },
+        "kflow.verifySSL": {
+          "type": "boolean",
+          "default": true
+        },
+        "kflow.keycloak.realm": {
+          "type": "string",
+          "default": ""
+        },
+        "kflow.keycloak.tokenUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Optional explicit Keycloak token endpoint (recommended when Keycloak is on a separate host)."
+        },
+        "kflow.defaultNamespace": {
+          "type": "string",
+          "default": "kubeflow-user"
+        },
+        "kflow.defaultImage": {
+          "type": "string",
+          "default": "pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime"
+        },
+        "kflow.defaultPVCsize": {
+          "type": "string",
+          "default": "10Gi"
+        },
+        "kflow.autoPVCforPip": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "menus": {
+      "editor/context": [
+        {
+          "command": "kubeflow.runTrainingJob",
+          "when": "resourceExtname == .py",
+          "group": "navigation@100"
+        }
+      ]
+    }
+  }
+}
