@@ -109,6 +109,11 @@
           "default": "",
           "description": "Optional explicit Keycloak token endpoint (recommended when Keycloak is on a separate host)."
         },
+        "kflow.keycloak.clientId": {
+          "type": "string",
+          "default": "kubeflow-vscode",
+          "description": "Keycloak OAuth client ID used for password/refresh token grants."
+        },
         "kflow.templatesFile": {
           "type": "string",
           "default": ".kubeflow/templates.json",

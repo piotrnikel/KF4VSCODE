@@ -17,6 +17,7 @@ function getSettings() {
     verifySSL: cfg.get('kflow.verifySSL', true),
     realm: cfg.get('kflow.keycloak.realm', ''),
     tokenUrl: cfg.get('kflow.keycloak.tokenUrl', ''),
+    clientId: cfg.get('kflow.keycloak.clientId', 'kubeflow-vscode'),
     templatesFile: cfg.get('kflow.templatesFile', '.kubeflow/templates.json'),
     defaultNamespace: cfg.get('kflow.defaultNamespace', 'kubeflow-user'),
     defaultImage: cfg.get('kflow.defaultImage', 'pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime'),
@@ -52,19 +53,21 @@ class AuthService {
     if (!password) return;
 
     const tokenEndpoint = this.resolveTokenEndpoint(url, settings.realm);
+    const clientId = String(settings.clientId || 'kubeflow-vscode').trim();
     const res = await fetch(tokenEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         grant_type: 'password',
-        client_id: 'kubeflow-vscode',
+        client_id: clientId,
         username,
         password
       })
     });
 
     if (!res.ok) {
-      throw new Error(`Authentication failed (${res.status}): ${await res.text()}`);
+      const body = await res.text();
+      throw new Error(this.buildAuthErrorMessage(res.status, body, tokenEndpoint, clientId));
     }
 
     const payload = await res.json();
@@ -99,18 +102,22 @@ class AuthService {
     if (!this.session || !this.session.refreshToken) throw new Error('No refresh token is available.');
     const settings = getSettings();
     const tokenEndpoint = this.resolveTokenEndpoint(settings.url, settings.realm);
+    const clientId = String(settings.clientId || 'kubeflow-vscode').trim();
 
     const res = await fetch(tokenEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         grant_type: 'refresh_token',
-        client_id: 'kubeflow-vscode',
+        client_id: clientId,
         refresh_token: this.session.refreshToken
       })
     });
 
-    if (!res.ok) throw new Error(`Session refresh failed (${res.status}).`);
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(this.buildAuthErrorMessage(res.status, body, tokenEndpoint, clientId));
+    }
     const payload = await res.json();
     await this.setSession({
       accessToken: String(payload.access_token),
@@ -139,10 +146,37 @@ class AuthService {
     }, delayMs);
   }
 
+  buildAuthErrorMessage(status, body, tokenEndpoint, clientId) {
+    let details = String(body || '').trim();
+
+    try {
+      const parsed = JSON.parse(body);
+      const err = parsed && parsed.error ? String(parsed.error) : '';
+      const desc = parsed && parsed.error_description ? String(parsed.error_description) : '';
+      details = [err, desc].filter(Boolean).join(': ') || details;
+
+      if (err === 'invalid_client' || err === 'unauthorized_client') {
+        return `Authentication failed (${status}): ${details}. Verify Keycloak client "${clientId}" exists, is public or has proper secret, and has Direct Access Grants enabled.`;
+      }
+
+      if (err === 'invalid_grant') {
+        return `Authentication failed (${status}): ${details}. Credentials may be correct, but user can be blocked by required actions, temporary disablement, or missing password grant permissions in Keycloak.`;
+      }
+    } catch {
+      // Keep raw response when body is not JSON.
+    }
+
+    return `Authentication failed (${status}) at ${tokenEndpoint}: ${details}`;
+  }
+
   resolveTokenEndpoint(url, realm) {
     const explicitTokenUrl = getSettings().tokenUrl;
     if (explicitTokenUrl) {
-      return String(explicitTokenUrl).replace(/\/$/, '');
+      const tokenUrl = String(explicitTokenUrl).trim();
+      if (!/^https?:\/\//i.test(tokenUrl)) {
+        throw new Error('Invalid "kflow.keycloak.tokenUrl": expected absolute URL starting with http:// or https://.');
+      }
+      return tokenUrl.replace(/\/$/, '');
     }
 
     const realmValue = String(realm || '').trim();
@@ -606,7 +640,7 @@ function registerCommands(context, authService, jobRunService, treeProvider) {
         const errorMsg = String(e);
         if (errorMsg.includes('Authentication failed (403)')) {
           vscode.window.showErrorMessage(
-            'Kubeflow login failed (403). Check kflow.keycloak.realm (realm name, not UI URL) or set kflow.keycloak.tokenUrl directly.'
+            'Kubeflow login failed (403). Check kflow.keycloak.realm/tokenUrl and verify Keycloak client settings (kflow.keycloak.clientId, Direct Access Grants).'
           );
         } else {
           vscode.window.showErrorMessage(`Kubeflow login failed: ${errorMsg}`);

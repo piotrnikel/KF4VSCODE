@@ -43,6 +43,14 @@ Optional explicit token endpoint (recommended when Keycloak is on another host):
 "kflow.keycloak.tokenUrl": "https://<keycloak-host>/realms/<realm>/protocol/openid-connect/token"
 ```
 
+> `kflow.keycloak.tokenUrl` must be an **absolute URL** that starts with `http://` or `https://`.
+
+Optional Keycloak client id (default `kubeflow-vscode`):
+
+```json
+"kflow.keycloak.clientId": "kubeflow-vscode"
+```
+
 Template file location:
 
 ```json
@@ -105,7 +113,15 @@ Use one of these configurations:
 "kflow.keycloak.tokenUrl": "https://<keycloak-host>/realms/<realm>/protocol/openid-connect/token"
 ```
 
+> `kflow.keycloak.tokenUrl` must be an **absolute URL** that starts with `http://` or `https://`.
+
 You can also set `kflow.keycloak.realm` to a full realm URL (`https://.../realms/<realm>`), and the extension auto-appends `/protocol/openid-connect/token`.
+
+If endpoint is correct and credentials are still rejected, verify in Keycloak:
+- client ID used by extension (`kflow.keycloak.clientId`, default `kubeflow-vscode`),
+- client type/credentials (public client or proper secret handling),
+- **Direct Access Grants** enabled for password grant,
+- user has no pending required actions (e.g. forced password update).
 
 ---
 

@@ -37,12 +37,13 @@ export class AuthService implements vscode.Disposable {
     if (!password) return;
 
     const tokenEndpoint = this.resolveTokenEndpoint(url, settings.realm);
+    const clientId = String(settings.clientId || 'kubeflow-vscode').trim();
     const res = await fetch(tokenEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         grant_type: 'password',
-        client_id: 'kubeflow-vscode',
+        client_id: clientId,
         username,
         password
       })
@@ -50,7 +51,7 @@ export class AuthService implements vscode.Disposable {
 
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(`Authentication failed (${res.status}): ${body}`);
+      throw new Error(this.buildAuthErrorMessage(res.status, body, tokenEndpoint, clientId));
     }
 
     const payload = (await res.json()) as Record<string, string | number>;
@@ -89,16 +90,20 @@ export class AuthService implements vscode.Disposable {
     }
     const settings = getSettings();
     const tokenEndpoint = this.resolveTokenEndpoint(settings.url, settings.realm);
+    const clientId = String(settings.clientId || 'kubeflow-vscode').trim();
     const res = await fetch(tokenEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         grant_type: 'refresh_token',
-        client_id: 'kubeflow-vscode',
+        client_id: clientId,
         refresh_token: this.session.refreshToken
       })
     });
-    if (!res.ok) throw new Error(`Session refresh failed (${res.status}).`);
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(this.buildAuthErrorMessage(res.status, body, tokenEndpoint, clientId));
+    }
     const payload = (await res.json()) as Record<string, string | number>;
     await this.setSession({
       accessToken: String(payload.access_token),
@@ -127,9 +132,47 @@ export class AuthService implements vscode.Disposable {
     }, delayMs);
   }
 
+  private buildAuthErrorMessage(status: number, body: string, tokenEndpoint: string, clientId: string): string {
+    let details = body.trim();
+
+    try {
+      const parsed = JSON.parse(body) as { error?: string; error_description?: string };
+      const err = parsed.error ? String(parsed.error) : '';
+      const desc = parsed.error_description ? String(parsed.error_description) : '';
+      details = [err, desc].filter(Boolean).join(': ') || details;
+
+      if (err === 'invalid_client' || err === 'unauthorized_client') {
+        return `Authentication failed (${status}): ${details}. Verify Keycloak client "${clientId}" exists, is public or has proper secret, and has Direct Access Grants enabled.`;
+      }
+
+      if (err === 'invalid_grant') {
+        return `Authentication failed (${status}): ${details}. Credentials may be correct, but user can be blocked by required actions, temporary disablement, or missing password grant permissions in Keycloak.`;
+      }
+    } catch {
+      // Keep raw response body when it is not JSON.
+    }
+
+    return `Authentication failed (${status}) at ${tokenEndpoint}: ${details}`;
+  }
+
   private resolveTokenEndpoint(url: string, realm: string): string {
-    const base = url.replace(/\/$/, '');
-    const r = realm || 'kubeflow';
+    const settings = getSettings();
+    const explicitTokenUrl = String(settings.tokenUrl || '').trim();
+
+    if (explicitTokenUrl) {
+      if (!/^https?:\/\//i.test(explicitTokenUrl)) {
+        throw new Error('Invalid "kflow.keycloak.tokenUrl": expected absolute URL starting with http:// or https://.');
+      }
+      return explicitTokenUrl.replace(/\/$/, '');
+    }
+
+    const realmValue = String(realm || '').trim();
+    if (/^https?:\/\//i.test(realmValue)) {
+      return `${realmValue.replace(/\/$/, '')}/protocol/openid-connect/token`;
+    }
+
+    const base = String(url).replace(/\/$/, '');
+    const r = realmValue || 'kubeflow';
     return `${base}/realms/${r}/protocol/openid-connect/token`;
   }
 
